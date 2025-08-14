@@ -1,0 +1,78 @@
+---
+title: "Data analysis for the Center for Democratic Development"
+format: pdf
+---
+
+## Libraries
+```{r}
+library(readr)
+library(sf)
+library(dplyr)
+
+## Used: purrr, janitor
+```
+
+## Data retrieval
+
+```{r}
+population = read_csv("data/population_20240910-133712.csv")
+improved_water = read_csv("data/WATERSERVICE_20240910-141054.csv")
+basic_sanitation = read_csv("data/Toilet_service_20240910-142404.csv")
+improved_sanitation = read_csv("data/Toilet_service_20240910-142525_improved.csv")
+msw_collection = read_csv("data/solidwaste_20240910-142814_collected.csv")
+household_size = read_csv("data/pop_20240910-144752.csv")
+
+## Regions aren't separated in the variables (population, water, etc) dataset so get geofiles and extract region and district labels for table joins
+labels = st_read("data/geofiles/Districts_261/District_261.shp") |> 
+  st_drop_geometry() |> 
+  select(-Label) |> 
+  janitor::clean_names()
+
+data = 
+  list(population, household_size, improved_water, basic_sanitation, improved_sanitation, msw_collection) |> 
+  purrr::reduce(left_join, by="Geographic_Area") |> 
+  janitor::clean_names()
+
+## Check for NAs
+sum(is.na(data))
+
+#### Filter out dataset to only have 261 districts
+## Get regions from labels dataset and then filter out new combined dataset using the region names
+regions = 
+  labels["region"] |> 
+  distinct() |> 
+  pull()
+
+regions = c(regions, "Ghana")
+
+df = filter(data, !geographic_area %in% regions)  
+
+## Join dataset to include a Regions column
+df =
+  df |> 
+  left_join(labels, by=join_by(geographic_area == district))
+
+## Df has 278 rows, expecting 261. Finding districts that don't have a region match
+df[is.na(df$region),] # These are sub-metropolitan areas also included in the dataset and can be removed.
+
+df = df[!is.na(df$region),]
+
+## Check for NAs
+sum(is.na(data))
+
+## Calculate proportions for indicators
+indicators_prop_df = 
+  df |> 
+  mutate(
+    improved_drinking_water_sources_prop = improved_drinking_water_source * average_household_size / population*100,
+    basic_sanitation_prop = basic_service_improved_and_exclusive_use * average_household_size / population * 100,
+    improved_sanitation_prop = improved_toilet_facilities * average_household_size / population * 100,
+    msw_collection_prop = collected * average_household_size / population * 100,
+    .keep = "unused"
+         ) |> 
+  rename(district = geographic_area) |> 
+  select(region, everything())
+
+write.csv(indicators_prop_df, "output/cdd_data.csv")
+```
+
